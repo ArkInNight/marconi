@@ -450,33 +450,8 @@ Project dianggap berhasil apabila:
 
 ---
 
-# 16. Implementation Status
+# 16. Changelog
 
-## Implemented (v0.2)
-
-- Skeleton Rust: CLI, Output, Error, util (`exe_dir`, byte scanner)
-- Cleanup Manager (dirs runtime + restore hooks + Drop, Ctrl+C/SIGTERM)
-- Process Detector (Linux: sysinfo + /proc; Windows: stub)
-- Capture Engine trait + orkestrator strategi (memscan, proxy, hook)
-- Strategi 1: memory scan Linux (ptrace + process_vm_readv, region priority,
-  UTF-8 + UTF-16LE anchor scan, poll loop, `--dump-file` mode)
-- URL Extractor (validasi `/query/summon`, unescape `&amp;`, sanitasi
-  `userId` + `token`)
-- Clipboard (arboard) dengan fallback print
-- README + unit tests (12)
-- Verifikasi end-to-end di Linux: proses target dengan URL di heap berhasil
-  di-scan dan URL terambil
-
-## Catatan Linux
-
-Membaca memori proses lain dibatasi `kernel.yama.ptrace_scope` (default 1).
-Bila terblokir, program menampilkan panduan (`sudo sysctl -w kernel.yama.ptrace_scope=0`
-atau jalankan dengan sudo). Perubahan ini sementara (reset saat reboot).
-
-## Belum (Next)
-
-- Windows backend (proses-deteksi + memory-read) — Phase 1
-- Strategi 2: temporary HTTPS proxy + CA sementara
-- Strategi 1b: native hook (WinHTTP/libcurl/OpenSSL)
-- Auto launch game, GUI, auto upload, multi language
+Perubahan per versi, status implementasi, dan backlog tercatat di
+[CHANGELOG.md](./CHANGELOG.md).
 

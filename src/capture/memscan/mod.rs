@@ -101,16 +101,19 @@ impl CaptureEngine for MemScanEngine {
                     return Ok(None);
                 }
                 output.scanning();
-                match scan_process_memory(pid) {
+                match scan_process_memory(pid, output.verbose) {
                     Ok(Some(url)) => return Ok(Some(url)),
                     Ok(None) => {}
                     Err(err) => {
                         if matches!(err, crate::error::AppError::AccessDenied) {
                             if !denied {
                                 denied = true;
-                                println!("! Cannot read game memory (ptrace access denied).");
-                                println!("  Fix: run this tool with sudo, or temporarily");
-                                println!("  run: sudo sysctl -w kernel.yama.ptrace_scope=0");
+                                println!("! Cannot read game memory (access denied).");
+                                #[cfg(target_os = "linux")]
+                                {
+                                    println!("  Fix: run this tool with sudo, or temporarily");
+                                    println!("  run: sudo sysctl -w kernel.yama.ptrace_scope=0");
+                                }
                                 println!();
                             }
                         } else if output.verbose {

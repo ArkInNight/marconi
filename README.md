@@ -1,21 +1,21 @@
 # Marconi — Reverse:1999 Link Grabber
 
-CLI lintas platform untuk mengambil URL **Summon History** (`/query/summon`) dari Reverse:1999 secara otomatis — tanpa Fiddler, tanpa mengubah sistem secara permanen.
+A cross-platform CLI tool that grabs the **Summon History** URL (`/query/summon`) from Reverse:1999 automatically — no Fiddler, no permanent system changes.
 
-Nama diambil dari **Guglielmo Marconi**, penemu radio: seperti Marconi menangkap sinyal dari udara, tool ini menangkap URL summon dari game.
+Named after **Guglielmo Marconi**, the inventor of radio: just as Marconi caught signals from the air, this tool catches the summon URL from the game.
 
-## Cara pakai
+## Usage
 
 ```sh
 ./marconi
 ```
 
-1. Jalankan program.
-2. Buka Reverse:1999 (Windows/Steam Proton).
-3. Buka halaman **Summon Review** / Summon History di dalam game.
-4. URL otomatis terdeteksi, disalin ke clipboard, lalu program keluar.
+1. Run the program.
+2. Launch Reverse:1999 (Windows/Steam Proton).
+3. Open the **Summon Review** / Summon History page in-game.
+4. The URL is detected, copied to the clipboard, and the program exits.
 
-Contoh output:
+Example output:
 
 ```
 ==================================
@@ -34,53 +34,56 @@ Open the Summon Review page in-game when ready.
 
 ✔ Link Found
 
-https://game-re-en-service.sl916.com/query/summon?userId=...&token=...
+https://game-re-en-service.sl916.com/query/summon?userId=...
 
 Copied to clipboard.
 
 Done.
 ```
 
-## Opsi CLI
+## CLI options
 
-| Opsi | Keterangan |
-| --- | --- |
-| `--game <pola>` | Timpa pola pencarian proses game (substring, case-insensitive). |
-| `--timeout <detik>` | Waktu tunggu URL setelah game terdeteksi (default 300). |
-| `--game-timeout <detik>` | Waktu tunggu game menyala (0 = tunggu terus). |
-| `--dump-file <path>` | Scan file dump memori alih-alih proses hidup (debug/testing). |
-| `--no-clipboard` | Jangan salin ke clipboard. |
-| `-v, --verbose` | Output rinci. |
+| Option                   | Description                                                              |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `--game <pattern>`       | Override the game process search pattern (substring, case-insensitive).  |
+| `--timeout <seconds>`    | How long to wait for the URL after the game is detected (default 300).   |
+| `--game-timeout <secs>`  | How long to wait for the game to launch (0 = wait forever).              |
+| `--dump-file <path>`     | Scan a memory dump file instead of a live process (debug/testing).       |
+| `--no-clipboard`         | Do not copy to the clipboard.                                            |
+| `-v, --verbose`          | Verbose output.                                                          |
 
-## Cara kerja
+## How it works
 
-1. **Process Detector** menemukan proses game (`Reverse1999.exe` / Steam `3092660`).
-2. **Capture Engine (Strategi 1: memory scan)** menempel ke proses (`ptrace` + `process_vm_readv`), membaca region memori, mencari string `com/query/summon` (UTF-8 **dan** UTF-16LE), lalu mengambil URL lengkap di sekitarnya.
-3. **URL Extractor** memvalidasi URL (`/query/summon` + parameter), membersihkan `&amp;`, dan menyisakan parameter `userId` + `token` (format yang dipakai gacha tracker).
-4. **Clipboard** menyalin URL; jika gagal, URL tetap ditampilkan.
-5. **Cleanup Manager** menghapus direktori runtime (`cache/ temp/ logs/`) dan memulihkan semua perubahan pada saat keluar (termasuk Ctrl+C / SIGTERM).
+1. **Process Detector** finds the game process (`Reverse1999.exe` / Steam `3092660`).
+2. **Capture Engine (Strategy 1: memory scan)** attaches to the process (`ptrace` + `process_vm_readv`), reads memory regions, searches for the `com/query/summon` string (UTF-8 **and** UTF-16LE), and extracts the full URL around it.
+3. **URL Extractor** validates the URL (`/query/summon` + parameters), cleans up `&amp;`, and keeps only the `userId` + `token` parameters (the format used by gacha trackers).
+4. **Clipboard** copies the URL; if it fails, the URL is still printed.
+5. **Cleanup Manager** removes the runtime directories (`cache/ temp/ logs/`) and restores any changes on exit (including Ctrl+C / SIGTERM).
 
-Semua file sementara dibuat di dalam folder program dan dibersihkan saat selesai. Tidak ada data yang dikirim ke mana pun.
+All temporary files are created inside the program's folder and cleaned up when done. No data is sent anywhere.
 
-## Catatan Linux / Proton
+## Linux / Proton notes
 
-- Membaca memori proses lain membutuhkan akses `ptrace`. Distribusi dengan
-  `kernel.yama.ptrace_scope=1` (default Arch/Fedora/Ubuntu) memblokir attach
-  ke proses yang bukan anak dari program ini. Solusi sementara:
+- Reading another process's memory requires `ptrace` access. Distributions with
+  `kernel.yama.ptrace_scope=1` (Arch/Fedora/Ubuntu default) block attaching to
+  processes that are not children of this program. Temporary workaround:
 
   ```sh
   sudo sysctl -w kernel.yama.ptrace_scope=0
   ```
 
-  (berlaku sampai reboot; atau jalankan tool dengan `sudo`). Jika tetap
-  terblokir, program menampilkan pesan panduan otomatis.
+  (applies until reboot; alternatively run the tool with `sudo`). If still
+  blocked, the program shows an automatic hint.
 
-## Status platform
+## Platform status
 
-- **Linux (Proton)** — aktif (Strategi 1 memory scan).
-- **Windows** — kerangka modul sudah ada; implementasi proses-deteksi & memory-read menyusul (Phase 2).
+- **Linux (Proton)** — active (Strategy 1 memory scan).
+- **Windows** — process detection (Toolhelp32) & memory read (`OpenProcess` +
+  `VirtualQueryEx` + `ReadProcessMemory`) are implemented and pass the
+  compile-check for the `x86_64-pc-windows-gnu` target; not yet runtime-tested
+  on Windows.
 
-## Pengembangan
+## Development
 
 ```sh
 cargo build --release
@@ -88,7 +91,7 @@ cargo test
 cargo clippy --all-targets
 ```
 
-Arsitektur mengikuti `AGENT.md`: `CLI`, `Process Detector`, `Capture Engine`
-(trait + orkestrator strategi), `URL Extractor`, `Clipboard`, `Cleanup Manager`,
-`Output`. Strategi berikutnya (temporary HTTPS proxy, native hook) tersedia
-sebagai stub di belakang trait yang sama.
+The architecture follows `AGENT.md`: `CLI`, `Process Detector`, `Capture Engine`
+(trait + strategy orchestrator), `URL Extractor`, `Clipboard`, `Cleanup Manager`,
+`Output`. Upcoming strategies (temporary HTTPS proxy, native hook) are available
+as stubs behind the same trait.

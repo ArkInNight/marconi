@@ -160,12 +160,24 @@ fn scan_range(pid: u32, start: u64, end: u64) -> Result<Option<String>, AppError
     Ok(None)
 }
 
-pub fn scan_process_memory(pid: u32) -> Result<Option<String>, AppError> {
+pub fn scan_process_memory(pid: u32, verbose: bool) -> Result<Option<String>, AppError> {
     let guard = AttachGuard::attach(pid)?;
     let regions = readable_regions(pid)?;
     for region in regions {
-        if let Some(url) = scan_range(pid, region.start, region.end)? {
-            return Ok(Some(url));
+        match scan_range(pid, region.start, region.end) {
+            Ok(Some(url)) => return Ok(Some(url)),
+            Ok(None) => {}
+            Err(err) => {
+                // Regions can be unmapped or change protection between reading
+                // /proc/<pid>/maps and reading the memory (GC, JIT, allocator).
+                // Skip the failing region instead of aborting the whole scan.
+                if verbose {
+                    println!(
+                        "[capture] skipped region {:#x}-{:#x}: {err}",
+                        region.start, region.end
+                    );
+                }
+            }
         }
     }
     drop(guard);
