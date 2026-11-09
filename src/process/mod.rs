@@ -23,6 +23,6 @@ pub async fn wait_for_game(
                 return None;
             }
         }
-        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 }

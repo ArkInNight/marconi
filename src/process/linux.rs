@@ -1,6 +1,6 @@
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
-use sysinfo::{Pid, ProcessesToUpdate, System};
+use sysinfo::{ProcessesToUpdate, System};
 
 pub fn find_game_process_impl(pattern: Option<&str>) -> Option<(u32, String)> {
     let excluded = ancestor_pids();
@@ -13,15 +13,11 @@ pub fn find_game_process_impl(pattern: Option<&str>) -> Option<(u32, String)> {
         if excluded.contains(&pid.as_u32()) {
             continue;
         }
-        if !is_game_process(pid, process.name(), pattern) {
+        if !is_game_process(pid.as_u32(), process.name(), pattern) {
             continue;
         }
         let name = process.name().to_string_lossy().into_owned();
-        if best
-            .as_ref()
-            .map(|(p, _)| *p > pid.as_u32())
-            .unwrap_or(true)
-        {
+        if best.as_ref().is_none_or(|(p, _)| *p > pid.as_u32()) {
             best = Some((pid.as_u32(), name));
         }
     }
@@ -34,18 +30,15 @@ fn ancestor_pids() -> Vec<u32> {
     let mut current = std::process::id();
     loop {
         pids.push(current);
-        let stat = match std::fs::read_to_string(format!("/proc/{current}/stat")) {
-            Ok(s) => s,
-            Err(_) => break,
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{current}/stat")) else {
+            break;
         };
-        let after_comm = match stat.rsplit(')').next() {
-            Some(s) => s,
-            None => break,
+        let Some(after_comm) = stat.rsplit(')').next() else {
+            break;
         };
         let fields: Vec<&str> = after_comm.split_whitespace().collect();
-        let ppid: u32 = match fields.get(1).and_then(|f| f.parse().ok()) {
-            Some(p) => p,
-            None => break,
+        let Some(ppid) = fields.get(1).and_then(|f| f.parse().ok()) else {
+            break;
         };
         if ppid == current {
             break;
@@ -62,7 +55,7 @@ fn matches_any(haystacks: &[String], pattern: &str) -> bool {
         .any(|h| h.to_ascii_lowercase().contains(&lower))
 }
 
-fn is_game_process(pid: &Pid, name: &OsStr, pattern: Option<&str>) -> bool {
+fn is_game_process(pid: u32, name: &OsStr, pattern: Option<&str>) -> bool {
     let proc_name = name.to_string_lossy().into_owned();
 
     let cmdline_path = format!("/proc/{pid}/cmdline");
@@ -77,31 +70,28 @@ fn is_game_process(pid: &Pid, name: &OsStr, pattern: Option<&str>) -> bool {
         .ok()
         .map(|t| String::from_utf8_lossy(t.as_os_str().as_bytes()).into_owned());
 
-    match pattern {
-        Some(p) => {
-            let hay: Vec<String> = [Some(proc_name), cmd0, exe_link]
-                .into_iter()
-                .flatten()
-                .collect();
-            matches_any(&hay, p)
+    if let Some(p) = pattern {
+        let hay: Vec<String> = [Some(proc_name), cmd0, exe_link]
+            .into_iter()
+            .flatten()
+            .collect();
+        matches_any(&hay, p)
+    } else {
+        let name_lower = proc_name.to_ascii_lowercase();
+        if name_lower.contains("reverse1999") {
+            return true;
         }
-        None => {
-            let name_lower = proc_name.to_ascii_lowercase();
-            if name_lower.contains("reverse1999") {
+        if let Some(c0) = &cmd0 {
+            let c0_lower = c0.to_ascii_lowercase();
+            if c0_lower.contains("reverse1999") || c0_lower.contains("3092660") {
                 return true;
             }
-            if let Some(c0) = &cmd0 {
-                let c0_lower = c0.to_ascii_lowercase();
-                if c0_lower.contains("reverse1999") || c0_lower.contains("3092660") {
-                    return true;
-                }
-            }
-            if let Some(exe) = &exe_link {
-                if exe.to_ascii_lowercase().contains("reverse1999") {
-                    return true;
-                }
-            }
-            false
         }
+        if let Some(exe) = &exe_link {
+            if exe.to_ascii_lowercase().contains("reverse1999") {
+                return true;
+            }
+        }
+        false
     }
 }

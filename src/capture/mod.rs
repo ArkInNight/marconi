@@ -31,7 +31,7 @@ pub async fn run_strategies(
         Box::new(hook::HookEngine),
     ];
 
-    for engine in engines.iter_mut() {
+    for engine in &mut engines {
         if output.verbose {
             println!("[capture] trying strategy: {}", engine.name());
         }

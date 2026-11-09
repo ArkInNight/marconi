@@ -1,54 +1,21 @@
-use super::MemScanEngine;
+use super::{ChunkedScanner, CHUNK_SIZE};
 use crate::error::AppError;
 use std::io;
 use std::path::Path;
 
-const CHUNK_SIZE: usize = 8 * 1024 * 1024;
-const OVERLAP: usize = 8192;
-
-struct AttachGuard {
-    pid: u32,
-    attached: bool,
-}
-
-impl AttachGuard {
-    fn attach(pid: u32) -> Result<Self, AppError> {
-        // Detect a running process (rejects zombies).
-        if !Path::new(&format!("/proc/{pid}")).exists() {
-            return Err(AppError::NotRunning);
-        }
-        let ret = unsafe { libc::ptrace(libc::PTRACE_ATTACH, pid, 0, 0) };
-        if ret != 0 {
-            let err = io::Error::last_os_error();
-            return Err(if err.raw_os_error() == Some(libc::EPERM) {
-                AppError::AccessDenied
-            } else {
-                AppError::from(format!("ptrace attach failed: {err}"))
-            });
-        }
-        let mut status: i32 = 0;
-        unsafe {
-            libc::waitpid(pid as libc::pid_t, &mut status, 0);
-        }
-        Ok(Self {
-            pid,
-            attached: true,
-        })
-    }
-}
-
-impl Drop for AttachGuard {
-    fn drop(&mut self) {
-        if self.attached {
-            unsafe {
-                libc::ptrace(libc::PTRACE_DETACH, self.pid, 0, 0);
-            }
-        }
-    }
-}
-
 pub fn process_alive(pid: u32) -> bool {
-    Path::new(&format!("/proc/{pid}")).exists()
+    let path = format!("/proc/{pid}");
+    if !Path::new(&path).exists() {
+        return false;
+    }
+    // A zombie still has a /proc entry; treat it as dead so we don't hang.
+    match std::fs::read_to_string(format!("{path}/stat")) {
+        Ok(stat) => stat
+            .rsplit(')')
+            .next()
+            .is_none_or(|rest| rest.split_whitespace().next() != Some("Z")),
+        Err(_) => true,
+    }
 }
 
 struct Region {
@@ -58,19 +25,22 @@ struct Region {
 }
 
 fn readable_regions(pid: u32) -> Result<Vec<Region>, AppError> {
-    let maps = std::fs::read_to_string(format!("/proc/{pid}/maps"))
-        .map_err(|e| AppError::from(format!("cannot read maps: {e}")))?;
+    let maps = std::fs::read_to_string(format!("/proc/{pid}/maps")).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            AppError::AccessDenied
+        } else {
+            AppError::from(format!("cannot read maps: {e}"))
+        }
+    })?;
 
     let mut regions: Vec<Region> = Vec::new();
     for line in maps.lines() {
         let mut fields = line.split_whitespace();
-        let range = match fields.next() {
-            Some(r) => r,
-            None => continue,
+        let Some(range) = fields.next() else {
+            continue;
         };
-        let perms = match fields.next() {
-            Some(p) => p,
-            None => continue,
+        let Some(perms) = fields.next() else {
+            continue;
         };
         let path = fields.next().unwrap_or("");
 
@@ -111,22 +81,41 @@ fn readable_regions(pid: u32) -> Result<Vec<Region>, AppError> {
     Ok(regions)
 }
 
-fn read_mem(pid: u32, addr: u64, len: usize) -> io::Result<Vec<u8>> {
-    let mut buf = vec![0u8; len];
+/// Merge adjacent regions with the same priority so strings spanning region
+/// boundaries are still picked up by the chunked carry scan.
+fn merge_regions(regions: Vec<Region>) -> Vec<Region> {
+    let mut merged: Vec<Region> = Vec::with_capacity(regions.len());
+    for region in regions {
+        if let Some(last) = merged.last_mut() {
+            if last.priority == region.priority && last.end == region.start {
+                last.end = region.end;
+                continue;
+            }
+        }
+        merged.push(region);
+    }
+    merged
+}
+
+fn is_access_denied(e: &io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(code) if code == libc::EPERM || code == libc::EACCES)
+}
+
+fn read_mem(pid: u32, addr: u64, buf: &mut [u8]) -> io::Result<usize> {
     let local = libc::iovec {
-        iov_base: buf.as_mut_ptr() as *mut libc::c_void,
-        iov_len: len,
+        iov_base: buf.as_mut_ptr().cast::<libc::c_void>(),
+        iov_len: buf.len(),
     };
     let remote = libc::iovec {
         iov_base: addr as *mut libc::c_void,
-        iov_len: len,
+        iov_len: buf.len(),
     };
     let n = unsafe {
         libc::process_vm_readv(
-            pid as libc::pid_t,
-            &local as *const libc::iovec,
+            pid.cast_signed(),
+            &raw const local,
             1,
-            &remote as *const libc::iovec,
+            &raw const remote,
             1,
             0,
         )
@@ -134,25 +123,29 @@ fn read_mem(pid: u32, addr: u64, len: usize) -> io::Result<Vec<u8>> {
     if n < 0 {
         return Err(io::Error::last_os_error());
     }
-    buf.truncate(n as usize);
-    Ok(buf)
+    Ok(n.cast_unsigned())
 }
 
 fn scan_range(pid: u32, start: u64, end: u64) -> Result<Option<String>, AppError> {
-    let mut carry: Vec<u8> = Vec::new();
+    let mut buf = Vec::with_capacity(CHUNK_SIZE);
+    let mut scanner = ChunkedScanner::new();
     let mut pos = start;
     while pos < end {
-        let size = CHUNK_SIZE.min((end - pos) as usize);
-        let buf = read_mem(pid, pos, size)
-            .map_err(|e| AppError::from(format!("read failed at {pos:#x}: {e}")))?;
-        let mut combined = std::mem::take(&mut carry);
-        combined.extend_from_slice(&buf);
-        if let Some(url) = MemScanEngine::scan_buffer(&combined) {
+        let remaining = usize::try_from(end - pos).unwrap_or(CHUNK_SIZE);
+        let size = CHUNK_SIZE.min(remaining);
+        buf.clear();
+        buf.resize(size, 0);
+        let n = read_mem(pid, pos, &mut buf).map_err(|e| {
+            if is_access_denied(&e) {
+                AppError::AccessDenied
+            } else {
+                AppError::from(format!("read failed at {pos:#x}: {e}"))
+            }
+        })?;
+        if let Some(url) = scanner.push_and_scan(&buf[..n]) {
             return Ok(Some(url));
         }
-        let keep = OVERLAP.min(combined.len());
-        carry = combined[combined.len() - keep..].to_vec();
-        if buf.len() < size {
+        if n < size {
             break; // region shrank or became unreadable
         }
         pos += size as u64;
@@ -160,13 +153,32 @@ fn scan_range(pid: u32, start: u64, end: u64) -> Result<Option<String>, AppError
     Ok(None)
 }
 
-pub fn scan_process_memory(pid: u32, verbose: bool) -> Result<Option<String>, AppError> {
-    let guard = AttachGuard::attach(pid)?;
+pub fn scan_process_memory(
+    pid: u32,
+    verbose: bool,
+    include_file_mapped: bool,
+) -> Result<Option<String>, AppError> {
     let regions = readable_regions(pid)?;
-    for region in regions {
+
+    // Check permission immediately via dummy read on the first region (if any)
+    if let Some(first) = regions.first() {
+        let mut probe = [0u8; 1];
+        if let Err(e) = read_mem(pid, first.start, &mut probe) {
+            if is_access_denied(&e) {
+                return Err(AppError::AccessDenied);
+            }
+        }
+    }
+
+    let mut denied = false;
+    for region in merge_regions(regions) {
+        if !include_file_mapped && region.priority > 0 {
+            continue;
+        }
         match scan_range(pid, region.start, region.end) {
             Ok(Some(url)) => return Ok(Some(url)),
             Ok(None) => {}
+            Err(AppError::AccessDenied) => denied = true,
             Err(err) => {
                 // Regions can be unmapped or change protection between reading
                 // /proc/<pid>/maps and reading the memory (GC, JIT, allocator).
@@ -180,6 +192,8 @@ pub fn scan_process_memory(pid: u32, verbose: bool) -> Result<Option<String>, Ap
             }
         }
     }
-    drop(guard);
+    if denied {
+        return Err(AppError::AccessDenied);
+    }
     Ok(None)
 }

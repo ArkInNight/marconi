@@ -17,9 +17,39 @@ use linux::{process_alive, scan_process_memory};
 #[cfg(target_os = "windows")]
 use windows::{process_alive, scan_process_memory};
 
-const CHUNK_SIZE: usize = 8 * 1024 * 1024;
+const CHUNK_SIZE: usize = 1024 * 1024;
 const OVERLAP: usize = 8192;
-const POLL_INTERVAL: Duration = Duration::from_millis(2000);
+const POLL_INTERVAL: Duration = Duration::from_secs(4);
+const FILE_MAPPED_AFTER_PASSES: u32 = 3;
+
+/// Scans a stream of chunks while keeping `OVERLAP` bytes of the previous
+/// chunk so strings spanning chunk boundaries are still matched. Buffers are
+/// reused across chunks to avoid repeated allocations.
+struct ChunkedScanner {
+    carry: Vec<u8>,
+    combined: Vec<u8>,
+}
+
+impl ChunkedScanner {
+    fn new() -> Self {
+        Self {
+            carry: Vec::new(),
+            combined: Vec::with_capacity(CHUNK_SIZE + OVERLAP),
+        }
+    }
+
+    fn push_and_scan(&mut self, buf: &[u8]) -> Option<String> {
+        self.combined.clear();
+        self.combined.extend_from_slice(&self.carry);
+        self.combined.extend_from_slice(buf);
+        let result = MemScanEngine::scan_buffer(&self.combined);
+        let keep = OVERLAP.min(self.combined.len());
+        self.carry.clear();
+        self.carry
+            .extend_from_slice(&self.combined[self.combined.len() - keep..]);
+        result
+    }
+}
 
 #[derive(Default)]
 pub struct MemScanEngine {
@@ -49,20 +79,16 @@ fn scan_dump_file(path: &Path) -> anyhow::Result<Option<String>> {
     use std::io::Read;
 
     let mut file = std::fs::File::open(path)?;
-    let mut carry: Vec<u8> = Vec::new();
     let mut buf = vec![0u8; CHUNK_SIZE];
+    let mut scanner = ChunkedScanner::new();
     loop {
         let n = file.read(&mut buf)?;
         if n == 0 {
             break;
         }
-        let mut combined = std::mem::take(&mut carry);
-        combined.extend_from_slice(&buf[..n]);
-        if let Some(url) = MemScanEngine::scan_buffer(&combined) {
+        if let Some(url) = scanner.push_and_scan(&buf[..n]) {
             return Ok(Some(url));
         }
-        let keep = OVERLAP.min(combined.len());
-        carry = combined[combined.len() - keep..].to_vec();
         if n < CHUNK_SIZE {
             break;
         }
@@ -83,16 +109,18 @@ impl CaptureEngine for MemScanEngine {
     {
         Box::pin(async move {
             if let Some(path) = &self.dump_file {
-                return scan_dump_file(path);
+                let path = path.clone();
+                let inner = tokio::task::spawn_blocking(move || scan_dump_file(&path)).await?;
+                return inner;
             }
 
-            let pid = match config.game_pid {
-                Some(pid) => pid,
-                None => return Ok(None),
+            let Some(pid) = config.game_pid else {
+                return Ok(None);
             };
 
             let deadline = Instant::now() + config.timeout;
             let mut denied = false;
+            let mut passes = 0;
             loop {
                 if !process_alive(pid) {
                     if output.verbose {
@@ -101,7 +129,14 @@ impl CaptureEngine for MemScanEngine {
                     return Ok(None);
                 }
                 output.scanning();
-                match scan_process_memory(pid, output.verbose) {
+                let include_file_mapped = passes >= FILE_MAPPED_AFTER_PASSES;
+                let verbose = output.verbose;
+                let result = tokio::task::spawn_blocking(move || {
+                    scan_process_memory(pid, verbose, include_file_mapped)
+                })
+                .await
+                .map_err(|join| anyhow::anyhow!("memory scan task panicked: {join}"))?;
+                match result {
                     Ok(Some(url)) => return Ok(Some(url)),
                     Ok(None) => {}
                     Err(err) => {
@@ -124,6 +159,7 @@ impl CaptureEngine for MemScanEngine {
                 if Instant::now() >= deadline {
                     return Ok(None);
                 }
+                passes += 1;
                 tokio::time::sleep(POLL_INTERVAL).await;
             }
         })
@@ -160,7 +196,7 @@ mod tests {
     fn finds_url_in_utf16_dump() {
         let utf16: Vec<u8> = sample_url()
             .encode_utf16()
-            .flat_map(|u| u.to_le_bytes())
+            .flat_map(u16::to_le_bytes)
             .collect();
         let mut dump = vec![0xAB; 1000];
         dump.extend_from_slice(&utf16);

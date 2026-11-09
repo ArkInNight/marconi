@@ -38,9 +38,7 @@ fn wide_to_string(bytes: &[u16]) -> String {
 
 fn matches_process(name: &str, pattern: Option<&str>) -> bool {
     match pattern {
-        Some(p) => name
-            .to_ascii_lowercase()
-            .contains(&p.to_ascii_lowercase()),
+        Some(p) => name.to_ascii_lowercase().contains(&p.to_ascii_lowercase()),
         None => name.to_ascii_lowercase().contains("reverse1999"),
     }
 }

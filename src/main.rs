@@ -3,6 +3,7 @@ mod cleanup;
 mod cli;
 mod clipboard;
 mod error;
+mod fetcher;
 mod output;
 mod process;
 mod url_extractor;
@@ -45,6 +46,7 @@ async fn run() -> i32 {
     let signals = signal_future();
     tokio::pin!(signals);
 
+    #[allow(clippy::ignored_unit_patterns)] // tokio::select! expands to `match ()`
     let result = tokio::select! {
         result = capture_flow(&cli, &output) => result,
         _ = &mut signals => {
@@ -56,24 +58,38 @@ async fn run() -> i32 {
     match result {
         Ok(ExitStatus::Found(url)) => {
             let sanitized = url_extractor::sanitize_url(&url);
-            output.link_found(&sanitized);
-            if cli.no_clipboard {
-                println!("Clipboard skipped (--no-clipboard).");
-                println!();
-                println!("Done.");
-                println!();
-            } else {
-                match clipboard::copy(&sanitized) {
-                    Ok(()) => output.copied(),
+            if cli.wants_json() {
+                // stdout is reserved for the JSON payload in this mode
+                // (so `marconi --json > history.json` produces a clean
+                // file), therefore all status text goes to stderr.
+                eprintln!("Link found, fetching summon history...");
+                match fetch_json(&cli, &sanitized).await {
+                    Ok(code) => code,
                     Err(err) => {
-                        if cli.verbose {
-                            eprintln!("clipboard error: {err}");
-                        }
-                        output.copy_failed(&sanitized);
+                        eprintln!("error: {err}");
+                        1
                     }
                 }
+            } else {
+                Output::link_found(&sanitized);
+                if cli.no_clipboard {
+                    println!("Clipboard skipped (--no-clipboard).");
+                    println!();
+                    println!("Done.");
+                    println!();
+                } else {
+                    match clipboard::copy(&sanitized) {
+                        Ok(()) => Output::copied(),
+                        Err(err) => {
+                            if cli.verbose {
+                                eprintln!("clipboard error: {err}");
+                            }
+                            Output::copy_failed();
+                        }
+                    }
+                }
+                0
             }
-            0
         }
         Ok(ExitStatus::GameNotRunning) => {
             println!("Reverse:1999 is not running.");
@@ -93,8 +109,53 @@ async fn run() -> i32 {
     }
 }
 
+async fn fetch_json(cli: &Cli, url: &str) -> anyhow::Result<i32> {
+    let url = url.to_string();
+    let timeout = cli.fetch_timeout_duration();
+    let body = tokio::task::spawn_blocking(move || fetcher::fetch_summon_history(&url, timeout))
+        .await
+        .map_err(|join| anyhow::anyhow!("fetch task panicked: {join}"))??;
+
+    let parsed = fetcher::parse_response(&body)?;
+    if !parsed.is_success() {
+        anyhow::bail!(
+            "summon history server rejected the token: code {} ({}) — the token has \
+             probably expired, exit Summon Review / restart the game, reopen it, \
+             and run marconi again",
+            parsed.code,
+            parsed.msg
+        );
+    }
+
+    if let Some(path) = &cli.json_file {
+        let value: serde_json::Value = serde_json::from_str(&body)?;
+        let pretty = serde_json::to_string_pretty(&value)?;
+        std::fs::write(path, format!("{pretty}\n"))?;
+        eprintln!(
+            "Summon history JSON saved to {} ({} records).",
+            path.display(),
+            parsed.record_count().unwrap_or(0)
+        );
+    } else {
+        println!("{}", body.trim());
+    }
+    Ok(0)
+}
+
 async fn capture_flow(cli: &Cli, output: &Output) -> anyhow::Result<ExitStatus> {
-    output.banner();
+    // In `--json` mode stdout belongs to the JSON payload, so the human
+    // progress banner is printed to stderr instead of being piped into
+    // the output file.
+    if cli.wants_json() {
+        eprintln!("==================================");
+        eprintln!();
+        eprintln!("Marconi — Reverse:1999 Link Grabber");
+        eprintln!();
+        eprintln!("==================================");
+        eprintln!();
+    } else {
+        Output::banner();
+    }
 
     let config = capture::CaptureConfig {
         game_pid: None,
@@ -110,13 +171,19 @@ async fn capture_flow(cli: &Cli, output: &Output) -> anyhow::Result<ExitStatus> 
         };
     }
 
-    output.waiting_game();
+    if !cli.wants_json() {
+        Output::waiting_game();
+    }
     let game = process::wait_for_game(cli.game.as_deref(), cli.game_timeout_duration()).await;
-    let (pid, name) = match game {
-        Some(game) => game,
-        None => return Ok(ExitStatus::GameNotRunning),
+    let Some((pid, name)) = game else {
+        return Ok(ExitStatus::GameNotRunning);
     };
-    output.game_detected(pid, &name);
+    if cli.wants_json() {
+        eprintln!("Game detected. (pid: {pid}, {name})");
+        eprintln!("Waiting for summon history...");
+    } else {
+        Output::game_detected(pid, &name);
+    }
 
     let config = capture::CaptureConfig {
         game_pid: Some(pid),

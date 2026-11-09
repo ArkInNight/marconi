@@ -7,7 +7,7 @@ impl Output {
         Self { verbose }
     }
 
-    pub fn banner(&self) {
+    pub fn banner() {
         println!("==================================");
         println!();
         println!("Marconi — Reverse:1999 Link Grabber");
@@ -16,17 +16,19 @@ impl Output {
         println!();
     }
 
-    pub fn waiting_game(&self) {
+    pub fn waiting_game() {
         println!("Waiting for Reverse:1999...");
         println!();
     }
 
-    pub fn game_detected(&self, pid: u32, name: &str) {
+    pub fn game_detected(pid: u32, name: &str) {
         println!("Game detected. (pid: {pid}, {name})");
         println!();
         println!("Waiting for summon history...");
         println!();
-        println!("Open the Summon Review page in-game when ready.");
+        println!("Now open the Summon Review page in-game (fresh, after this");
+        println!("message), then import the link immediately — the token in");
+        println!("the URL expires in about 5 minutes.");
         println!();
     }
 
@@ -36,25 +38,31 @@ impl Output {
         }
     }
 
-    pub fn link_found(&self, url: &str) {
+    pub fn link_found(url: &str) {
         println!("✔ Link Found");
         println!();
         println!("{url}");
         println!();
+        println!("⚠ The token in this link expires in about 5 minutes.");
+        println!("  Import it into your tracker right away. Do not reuse an");
+        println!("  old link: if the tracker answers {{\"msg\":\"没有权限\",\"code\":-6}}");
+        println!("  (\"no permission\"), the token has expired — exit the Summon");
+        println!("  Review page / restart the game, reopen Summon Review, and");
+        println!("  run marconi again to grab a fresh link.");
+        println!();
     }
 
-    pub fn copied(&self) {
+    pub fn copied() {
         println!("Copied to clipboard.");
         println!();
         println!("Done.");
         println!();
     }
 
-    pub fn copy_failed(&self, url: &str) {
+    pub fn copy_failed() {
         println!("! Clipboard unavailable. URL above was not copied.");
         println!();
         println!("Done.");
         println!();
-        let _ = url;
     }
 }
