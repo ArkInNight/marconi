@@ -1,6 +1,6 @@
 [package]
 name = "marconi"
-version = "0.1.0"
+version = "0.5.0"
 edition = "2021"
 description = "Reverse:1999 Summon History link grabber"
 license = "MIT"

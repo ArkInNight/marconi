@@ -10,6 +10,28 @@ Named after **Guglielmo Marconi**, the inventor of radio: just as Marconi caught
 ./marconi
 ```
 
+Or, without downloading anything by hand — the release binary is fetched,
+checksum-verified, run, and cleaned up:
+
+```sh
+# Linux (asks for sudo only if ptrace is restricted)
+curl -fsSL https://raw.githubusercontent.com/ArkInNight/marconi/main/scripts/get.sh | sh
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/ArkInNight/marconi/main/scripts/get.ps1 | iex
+```
+
+Both accept marconi's flags (`sh -s -- --json`, or `$env:MARCONI_ARGS='--json'`
+on Windows).
+
+> This one-liner is a downloader + runner, not a different capture method.
+> The trick used by other gacha tools — reading the URL out of the game's
+> on-disk web cache — does **not** work for Reverse:1999: it has no
+> `webCaches` folder, its Windows `INetCache` is empty, and the Lua
+> `logNormal(url)` line is filtered out of `logicLog` in the retail build.
+> The summon URL only exists in the game's memory, so memory scanning (or a
+> proxy/hook) remains necessary.
+
 1. Run the program.
 2. Launch Reverse:1999 (Windows/Steam Proton).
 3. Open the **Summon Review** / Summon History page in-game.
@@ -162,6 +184,18 @@ cargo fmt
 cargo test
 cargo clippy --all-targets -- -D warnings
 cargo build --release
+```
+
+### Releasing
+
+Push a `v*` tag; `.github/workflows/release.yml` builds Linux/Windows
+binaries, writes `SHA256SUMS`, and publishes them as a GitHub Release (the
+one-liner scripts point at `releases/latest/download/...`, so they pick the
+new build up automatically):
+
+```sh
+git tag v0.5.0
+git push origin v0.5.0
 ```
 
 CI (`.github/workflows/ci.yml`) runs fmt, clippy, tests, and builds on both

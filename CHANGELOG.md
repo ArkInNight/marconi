@@ -4,7 +4,7 @@ All notable changes to the Marconi project are recorded in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [v0.5] - 2026-11-14
 
 ### Added
 
@@ -22,6 +22,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `userId`, matching the real tokens the server accepts for JSON
   responses; a non-UUID token or non-numeric userId gets an empty
   HTTP 200 body from the server.
+- One-liner launchers, `irm ... | iex` on Windows (`scripts/get.ps1`) and
+  `curl ... | sh` on Linux (`scripts/get.sh`): download the latest release
+  binary, verify its SHA-256 against the release's `SHA256SUMS`, run it,
+  and clean up. On Linux the script re-runs under `sudo` only when
+  `kernel.yama.ptrace_scope` blocks memory reads (`MARCONI_NO_SUDO=1`
+  skips that and prints the manual hint). This is distribution only — the
+  capture mechanism is unchanged, because Reverse:1999 does not cache the
+  summon URL on disk (no Unity `webCaches`, empty Windows `INetCache`, and
+  Lua `logNormal` lines are filtered from `logicLog` in the retail build).
+- `.github/workflows/release.yml`: pushing a `v*` tag builds Linux and
+  Windows release binaries, writes `SHA256SUMS`, and publishes them as a
+  GitHub Release. The one-liners resolve
+  `github.com/ArkInNight/marconi/releases/latest/download/...`, so they
+  pick up each new release automatically.
 
 ### Fixed
 
