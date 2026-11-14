@@ -27,7 +27,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   binary, verify its SHA-256 against the release's `SHA256SUMS`, run it,
   and clean up. On Linux the script re-runs under `sudo` only when
   `kernel.yama.ptrace_scope` blocks memory reads (`MARCONI_NO_SUDO=1`
-  skips that and prints the manual hint). This is distribution only — the
+  skips that and prints the manual hint). Launcher status messages go to
+  stderr, so `... | sh -s -- --json > history.json` still produces a clean
+  JSON file. This is distribution only — the
   capture mechanism is unchanged, because Reverse:1999 does not cache the
   summon URL on disk (no Unity `webCaches`, empty Windows `INetCache`, and
   Lua `logNormal` lines are filtered from `logicLog` in the retail build).

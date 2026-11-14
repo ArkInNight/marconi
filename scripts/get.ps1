@@ -24,12 +24,13 @@ $tmp = Join-Path ([IO.Path]::GetTempPath()) ('marconi-' + [Guid]::NewGuid().ToSt
 New-Item -ItemType Directory -Path $tmp | Out-Null
 
 try {
-    Write-Output 'Downloading marconi...'
+    [Console]::Error.WriteLine('Downloading marconi...')
     $zip = Join-Path $tmp $asset
     Invoke-WebRequest -Uri "$base/$asset" -OutFile $zip -UseBasicParsing
 
-    $sums = (Invoke-WebRequest -Uri "$base/SHA256SUMS" -UseBasicParsing).Content
-    $line = ($sums -split "`n" | Where-Object { $_ -match [regex]::Escape($asset) } | Select-Object -First 1)
+    $sumsFile = Join-Path $tmp 'SHA256SUMS'
+    Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $sumsFile -UseBasicParsing
+    $line = Get-Content -Path $sumsFile | Where-Object { $_ -match [regex]::Escape($asset) } | Select-Object -First 1
     if (-not $line) { throw "SHA256SUMS does not list $asset" }
     $expected = ($line.Trim() -split '\s+')[0].ToLower()
     $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
@@ -42,14 +43,16 @@ try {
     if (-not (Test-Path $exe)) { throw 'marconi.exe is missing from the release archive' }
 
     $cliArgs = @()
-    if ($env:MARCONI_ARGS) {
+    if ($args.Count -gt 0) {
+        $cliArgs = $args
+    } elseif ($env:MARCONI_ARGS) {
         $cliArgs = @($env:MARCONI_ARGS -split '\s+' | Where-Object { $_ })
     }
 
     & $exe @cliArgs
 } catch {
-    Write-Output "marconi: $($_.Exception.Message)"
-    Write-Output "Download it manually from https://github.com/$repo/releases"
+    [Console]::Error.WriteLine("marconi: $($_.Exception.Message)")
+    [Console]::Error.WriteLine("Download it manually from https://github.com/$repo/releases")
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }

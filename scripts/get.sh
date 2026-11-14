@@ -50,7 +50,7 @@ fetch() {
     fi
 }
 
-echo "Downloading marconi..."
+echo "Downloading marconi..." >&2
 fetch "$BASE/$ASSET" "$TMP/$ASSET"
 fetch "$BASE/SHA256SUMS" "$TMP/SHA256SUMS"
 
@@ -80,8 +80,8 @@ if [ "$(id -u)" -ne 0 ] && [ -n "$SCOPE" ] && [ "$SCOPE" != "0" ] && [ "${MARCON
         echo "marconi: ptrace is restricted (kernel.yama.ptrace_scope=$SCOPE) and sudo is not installed." >&2
         die "run: sudo sysctl -w kernel.yama.ptrace_scope=0   (temporary, until reboot)"
     fi
-    echo "ptrace is restricted (kernel.yama.ptrace_scope=$SCOPE); re-running with sudo..."
-    echo "Set MARCONI_NO_SUDO=1 to see the manual instructions instead."
+    echo "ptrace is restricted (kernel.yama.ptrace_scope=$SCOPE); re-running with sudo..." >&2
+    echo "Set MARCONI_NO_SUDO=1 to see the manual instructions instead." >&2
     sudo -E "$TMP/marconi" "$@"
     exit $?
 fi
